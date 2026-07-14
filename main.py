@@ -1,3 +1,4 @@
+
 # main.py
 import logging, asyncio, requests, json, os, time, tempfile, zipfile, shutil, traceback, io, re
 from datetime import datetime
@@ -40,16 +41,14 @@ if TAVILY_AVAILABLE and TAVILY_API_KEY:
 else:
     tavily_client = None
 
-# Cache for search results (5 min)
 search_cache: Dict[str, Dict] = {}
 
 def web_search_tavily(query: str) -> Dict:
     """Perform Tavily search if available, else fallback to DuckDuckGo. Returns {text: str, sources: list}"""
-    # Check cache
     cache_key = f"tavily_{query}"
     if cache_key in search_cache:
         cached = search_cache[cache_key]
-        if time.time() - cached["timestamp"] < 300:  # 5 minutes
+        if time.time() - cached["timestamp"] < 300:
             return cached["data"]
 
     result = {"text": "", "sources": []}
@@ -69,15 +68,11 @@ def web_search_tavily(query: str) -> Dict:
         except Exception as e:
             logger.warning(f"Tavily search failed: {e}")
 
-    # Fallback to DuckDuckGo if Tavily didn't return results
     if not result["text"]:
         ddg_text = duckduckgo_search(query)
         if ddg_text and "No results" not in ddg_text:
             result["text"] = ddg_text
-            # Extract source links from DDG? not reliable, so just provide the text
-            result["sources"] = []  # No clickable sources from DDG
 
-    # Cache result
     search_cache[cache_key] = {"timestamp": time.time(), "data": result}
     return result
 
@@ -206,7 +201,6 @@ class ToolManager:
                 time.sleep(1)
         return {"ok":False,"err":"Max retries exceeded"}
     def _web_search(self, query, num=5):
-        # Use the unified Tavily + DuckDuckGo search
         return web_search_tavily(query)["text"]
     def _image_analyze(self,image_data):
         API_URL="https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
@@ -258,7 +252,6 @@ class Planner:
         m=msg.lower(); subs=[]; tid=0
         if uid:
             tid+=1; subs.append(SubTask(f"t{tid}","Get user context","memory_retrieve",{"user_id":uid}))
-        # Search intent detection
         if any(w in m for w in ["search","find","google","news","latest","current","price","weather","product","location","information about","what is","who is","when did","where is"]):
             tid+=1; subs.append(SubTask(f"t{tid}","Web search","web_search",{"query":msg}))
         if any(w in m for w in ["generate image","create image","draw","make a picture","imagine","generate a photo","create a picture","text to image"]):
@@ -484,10 +477,7 @@ async def handle_message(update, context):
                     elif task.tool_name == "calculator":
                         context_parts.append("Calculation result: " + res["data"])
                     elif task.tool_name == "web_search":
-                        # search data is already text, but we also want source URLs if Tavily was used
                         context_parts.append(res["data"])
-                        # check if there are sources from the Tavily result
-                        # we can't pass them through ToolManager easily, so we retrieve from the cache
                         cache_key = f"tavily_{task.parameters.get('query',msg)}"
                         if cache_key in search_cache:
                             search_sources = search_cache[cache_key]["data"]["sources"]
@@ -499,12 +489,10 @@ async def handle_message(update, context):
         search_res = "\n".join(context_parts) if context_parts else None
         resp = generator.generate(uid, msg, uname, config["prompt"], model, search_res=search_res)
 
-        # Build reply with source buttons if available
         reply_markup = None
         if search_sources and len(search_sources) > 0:
             buttons = []
             for src in search_sources[:5]:
-                # Use title as button text, truncate if needed
                 label = src["title"][:50]
                 buttons.append([InlineKeyboardButton(f"🔗 {label}", url=src["url"])])
             reply_markup = InlineKeyboardMarkup(buttons)
@@ -516,7 +504,6 @@ async def handle_message(update, context):
             await update.message.reply_document(document=open(zip_path,'rb'), filename="project.zip")
             shutil.rmtree(os.path.dirname(zip_path))
         elif not image_bytes:
-            # Add a sources header if we have sources
             if search_sources:
                 resp += "\n\n📎 **Sources**"
             await update.message.reply_text(resp, reply_markup=reply_markup)
